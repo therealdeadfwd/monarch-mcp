@@ -1,405 +1,241 @@
-"""Tests for transaction rule tools (create / get / delete)."""
+"""Tests for transaction-rule CRUD tools and the rule_to_update_input helper."""
 # pylint: disable=missing-function-docstring
 
 import json
 
-from gql.transport.exceptions import TransportQueryError
+from monarch_mcp.transaction_rules import (
+    RULE_INPUT_FIELDS,
+    rule_to_update_input,
+)
 
 
-# ===================================================================
-# 1 – happy path: merchant name "contains"
-# ===================================================================
+# ── Sample fixtures ────────────────────────────────────────────────────
 
 
-async def test_create_rule_merchant_contains(mcp_write_client, mock_monarch_client):
+SAMPLE_RULE = {
+    "id": "rule-1",
+    "order": 1,
+    "merchantCriteriaUseOriginalStatement": False,
+    "merchantCriteria": None,
+    "originalStatementCriteria": [
+        {"operator": "eq", "value": "AMZN", "__typename": "RuleStringCriteria"},
+    ],
+    "merchantNameCriteria": [
+        {"operator": "contains", "value": "Amazon",
+         "__typename": "RuleStringCriteria"},
+    ],
+    "amountCriteria": {
+        "operator": "gt",
+        "isExpense": True,
+        "value": 10,
+        "valueRange": None,
+        "__typename": "RuleAmountCriteria",
+    },
+    "categoryIds": ["cat-1"],
+    "accountIds": ["acct-1"],
+    "setMerchantAction": {
+        "id": "merchant-1",
+        "name": "Amazon",
+        "__typename": "Merchant",
+    },
+    "setCategoryAction": {
+        "id": "cat-1",
+        "name": "Shopping",
+        "icon": ":shopping_cart:",
+        "__typename": "Category",
+    },
+    "addTagsAction": [
+        {"id": "tag-1", "name": "online", "color": "#abc",
+         "__typename": "TransactionTag"},
+        {"id": "tag-2", "name": "review", "color": "#def",
+         "__typename": "TransactionTag"},
+    ],
+    "linkGoalAction": None,
+    "linkSavingsGoalAction": None,
+    "reviewStatusAction": "reviewed",
+    "splitTransactionsAction": None,
+    "__typename": "TransactionRuleV2",
+}
+
+
+# ── rule_to_update_input helper ────────────────────────────────────────
+
+
+def test_rule_to_update_input_extracts_ids():
+    payload = rule_to_update_input(SAMPLE_RULE, {})
+
+    # Plain id strings, not nested objects.
+    assert payload["setCategoryAction"] == "cat-1"
+    # setMerchantAction is the merchant *name* string.
+    assert payload["setMerchantAction"] == "Amazon"
+    # addTagsAction is a flat list of ids.
+    assert payload["addTagsAction"] == ["tag-1", "tag-2"]
+
+
+def test_rule_to_update_input_strips_typename():
+    payload = rule_to_update_input(SAMPLE_RULE, {})
+
+    def _has_typename(obj):
+        if isinstance(obj, dict):
+            if "__typename" in obj:
+                return True
+            return any(_has_typename(v) for v in obj.values())
+        if isinstance(obj, list):
+            return any(_has_typename(v) for v in obj)
+        return False
+
+    assert not _has_typename(payload)
+
+
+def test_rule_to_update_input_overrides_take_precedence():
+    overrides = {
+        "setCategoryAction": "cat-overridden",
+        "addTagsAction": ["tag-new"],
+        "categoryIds": ["cat-x", "cat-y"],
+    }
+
+    payload = rule_to_update_input(SAMPLE_RULE, overrides)
+
+    assert payload["setCategoryAction"] == "cat-overridden"
+    assert payload["addTagsAction"] == ["tag-new"]
+    assert payload["categoryIds"] == ["cat-x", "cat-y"]
+    # Untouched fields preserved.
+    assert payload["setMerchantAction"] == "Amazon"
+
+
+def test_rule_to_update_input_preserves_id():
+    assert rule_to_update_input(SAMPLE_RULE, {})["id"] == "rule-1"
+    assert (
+        rule_to_update_input(SAMPLE_RULE, {"setMerchantAction": "Other"})["id"]
+        == "rule-1"
+    )
+
+
+# ── MCP tool tests ─────────────────────────────────────────────────────
+
+
+async def test_get_transaction_rules_returns_list(mcp_client, mock_monarch_client):
     mock_monarch_client.gql_call.return_value = {
-        "createTransactionRuleV2": {"errors": []}
+        "transactionRules": [SAMPLE_RULE],
+    }
+
+    result = json.loads(
+        (await mcp_client.call_tool("get_transaction_rules", {})).content[0].text
+    )
+
+    assert result["transactionRules"][0]["id"] == "rule-1"
+    call_kwargs = mock_monarch_client.gql_call.call_args[1]
+    assert call_kwargs["operation"] == "GetTransactionRules"
+    assert call_kwargs["variables"] == {}
+
+
+async def test_create_transaction_rule_passes_input(mcp_write_client, mock_monarch_client):
+    mock_monarch_client.gql_call.return_value = {
+        "createTransactionRuleV2": {"errors": None},
+    }
+    rule_input = {
+        "merchantNameCriteria": [{"operator": "contains", "value": "Test"}],
+        "setCategoryAction": "cat-99",
+        "applyToExistingTransactions": False,
     }
 
     result = json.loads(
         (await mcp_write_client.call_tool(
             "create_transaction_rule",
-            {
-                "set_category_id": "cat-123",
-                "merchant_name_value": "Amazon",
-            },
+            {"rule_input": rule_input},
         )).content[0].text
     )
 
-    assert result["created"] is True
+    assert result["createTransactionRuleV2"]["errors"] is None
     call_kwargs = mock_monarch_client.gql_call.call_args[1]
     assert call_kwargs["operation"] == "Common_CreateTransactionRuleMutationV2"
-    variables = call_kwargs["variables"]
-    assert variables["input"]["merchantNameCriteria"] == [
-        {"operator": "contains", "value": "Amazon"}
-    ]
-    assert variables["input"]["setCategoryAction"] == "cat-123"
-    assert variables["input"]["applyToExistingTransactions"] is False
+    assert call_kwargs["variables"] == {"input": rule_input}
 
 
-# ===================================================================
-# 2 – happy path: merchant name "eq"
-# ===================================================================
-
-
-async def test_create_rule_merchant_eq(mcp_write_client, mock_monarch_client):
-    mock_monarch_client.gql_call.return_value = {
-        "createTransactionRuleV2": {"errors": []}
-    }
-
-    result = json.loads(
-        (await mcp_write_client.call_tool(
-            "create_transaction_rule",
-            {
-                "set_category_id": "cat-456",
-                "merchant_name_value": "contribution",
-                "merchant_name_operator": "eq",
-            },
-        )).content[0].text
-    )
-
-    assert result["created"] is True
-    variables = mock_monarch_client.gql_call.call_args[1]["variables"]
-    assert variables["input"]["merchantNameCriteria"] == [
-        {"operator": "eq", "value": "contribution"}
+async def test_update_transaction_rule_merges_overrides(
+    mcp_write_client, mock_monarch_client,
+):
+    # First call returns rules list, second call returns update payload.
+    mock_monarch_client.gql_call.side_effect = [
+        {"transactionRules": [SAMPLE_RULE]},
+        {"updateTransactionRuleV2": {"errors": None}},
     ]
 
-
-# ===================================================================
-# 3 – happy path: original statement criteria
-# ===================================================================
-
-
-async def test_create_rule_original_statement(mcp_write_client, mock_monarch_client):
-    mock_monarch_client.gql_call.return_value = {
-        "createTransactionRuleV2": {"errors": []}
-    }
-
     result = json.loads(
         (await mcp_write_client.call_tool(
-            "create_transaction_rule",
+            "update_transaction_rule",
             {
-                "set_category_id": "cat-789",
-                "original_statement_value": "ROLLOVER CASH",
-                "original_statement_operator": "contains",
+                "rule_id": "rule-1",
+                "overrides": {"setCategoryAction": "cat-overridden"},
             },
         )).content[0].text
     )
 
-    assert result["created"] is True
-    variables = mock_monarch_client.gql_call.call_args[1]["variables"]
-    assert variables["input"]["originalStatementCriteria"] == [
-        {"operator": "contains", "value": "ROLLOVER CASH"}
-    ]
+    assert result["updateTransactionRuleV2"]["errors"] is None
+    assert mock_monarch_client.gql_call.call_count == 2
 
-
-# ===================================================================
-# 4 – happy path: account_ids scoping
-# ===================================================================
-
-
-async def test_create_rule_with_account_ids(mcp_write_client, mock_monarch_client):
-    mock_monarch_client.gql_call.return_value = {
-        "createTransactionRuleV2": {"errors": []}
-    }
-
-    result = json.loads(
-        (await mcp_write_client.call_tool(
-            "create_transaction_rule",
-            {
-                "set_category_id": "cat-123",
-                "merchant_name_value": "Fidelity",
-                "account_ids": ["acct-1", "acct-2"],
-            },
-        )).content[0].text
+    # Inspect the second call (the update mutation).
+    update_call_kwargs = mock_monarch_client.gql_call.call_args_list[1][1]
+    assert (
+        update_call_kwargs["operation"]
+        == "Common_UpdateTransactionRuleMutationV2"
     )
-
-    assert result["created"] is True
-    variables = mock_monarch_client.gql_call.call_args[1]["variables"]
-    assert variables["input"]["accountIds"] == ["acct-1", "acct-2"]
-
-
-# ===================================================================
-# 5 – happy path: apply_to_existing_transactions = True
-# ===================================================================
-
-
-async def test_create_rule_apply_to_existing(mcp_write_client, mock_monarch_client):
-    mock_monarch_client.gql_call.return_value = {
-        "createTransactionRuleV2": {"errors": []}
-    }
-
-    result = json.loads(
-        (await mcp_write_client.call_tool(
-            "create_transaction_rule",
-            {
-                "set_category_id": "cat-123",
-                "merchant_name_value": "Whole Foods",
-                "apply_to_existing_transactions": True,
-            },
-        )).content[0].text
-    )
-
-    assert result["created"] is True
-    variables = mock_monarch_client.gql_call.call_args[1]["variables"]
-    assert variables["input"]["applyToExistingTransactions"] is True
+    payload = update_call_kwargs["variables"]["input"]
+    assert payload["id"] == "rule-1"
+    # Override applied.
+    assert payload["setCategoryAction"] == "cat-overridden"
+    # Existing fields preserved + normalised.
+    assert payload["setMerchantAction"] == "Amazon"
+    assert payload["addTagsAction"] == ["tag-1", "tag-2"]
+    assert payload["categoryIds"] == ["cat-1"]
+    # __typename stripped.
+    assert "__typename" not in payload["amountCriteria"]
+    # All input fields covered.
+    for field in RULE_INPUT_FIELDS:
+        if field in SAMPLE_RULE:
+            assert field in payload
 
 
-# ===================================================================
-# 6 – validation: no criteria provided
-# ===================================================================
-
-
-async def test_create_rule_no_criteria(mcp_write_client, mock_monarch_client):
-    result = json.loads(
-        (await mcp_write_client.call_tool(
-            "create_transaction_rule",
-            {"set_category_id": "cat-123"},
-        )).content[0].text
-    )
-
-    assert "error" in result
-    mock_monarch_client.gql_call.assert_not_called()
-
-
-# ===================================================================
-# 7 – validation: invalid merchant_name_operator
-# ===================================================================
-
-
-async def test_create_rule_invalid_merchant_operator(mcp_write_client, mock_monarch_client):
-    result = json.loads(
-        (await mcp_write_client.call_tool(
-            "create_transaction_rule",
-            {
-                "set_category_id": "cat-123",
-                "merchant_name_value": "Amazon",
-                "merchant_name_operator": "startswith",
-            },
-        )).content[0].text
-    )
-
-    assert "error" in result
-    mock_monarch_client.gql_call.assert_not_called()
-
-
-# ===================================================================
-# 8 – validation: invalid original_statement_operator
-# ===================================================================
-
-
-async def test_create_rule_invalid_statement_operator(mcp_write_client, mock_monarch_client):
-    result = json.loads(
-        (await mcp_write_client.call_tool(
-            "create_transaction_rule",
-            {
-                "set_category_id": "cat-123",
-                "original_statement_value": "ROLLOVER",
-                "original_statement_operator": "regex",
-            },
-        )).content[0].text
-    )
-
-    assert "error" in result
-    mock_monarch_client.gql_call.assert_not_called()
-
-
-# ===================================================================
-# 9 – API-level error: errors as list
-# ===================================================================
-
-
-async def test_create_rule_api_error_list(mcp_write_client, mock_monarch_client):
-    mock_monarch_client.gql_call.return_value = {
-        "createTransactionRuleV2": {
-            "errors": [{"message": "Category not found"}]
-        }
-    }
-
-    result = json.loads(
-        (await mcp_write_client.call_tool(
-            "create_transaction_rule",
-            {
-                "set_category_id": "cat-bad",
-                "merchant_name_value": "Amazon",
-            },
-        )).content[0].text
-    )
-
-    assert "error" in result
-    assert "Category not found" in result["error"]
-
-
-# ===================================================================
-# 9b – API-level error: errors as bare dict (Monarch's actual shape)
-# ===================================================================
-
-
-async def test_create_rule_api_error_dict(mcp_write_client, mock_monarch_client):
-    mock_monarch_client.gql_call.return_value = {
-        "createTransactionRuleV2": {
-            "errors": {"message": "Invalid operator"}
-        }
-    }
-
-    result = json.loads(
-        (await mcp_write_client.call_tool(
-            "create_transaction_rule",
-            {
-                "set_category_id": "cat-123",
-                "merchant_name_value": "Amazon",
-                "merchant_name_operator": "contains",
-            },
-        )).content[0].text
-    )
-
-    assert "error" in result
-    assert "Invalid operator" in result["error"]
-
-
-# ===================================================================
-# 10 – transport error handled by decorator
-# ===================================================================
-
-
-async def test_create_rule_transport_error(mcp_write_client, mock_monarch_client):
-    mock_monarch_client.gql_call.side_effect = Exception("Network failure")
-
-    result = (await mcp_write_client.call_tool(
-        "create_transaction_rule",
-        {
-            "set_category_id": "cat-123",
-            "merchant_name_value": "Amazon",
-        },
-    )).content[0].text
-
-    assert "Error" in result
-    assert "Network failure" in result
-
-
-# ===================================================================
-# 11 – both merchant name and original statement provided together
-# ===================================================================
-
-
-async def test_create_rule_both_criteria(mcp_write_client, mock_monarch_client):
-    mock_monarch_client.gql_call.return_value = {
-        "createTransactionRuleV2": {"errors": []}
-    }
-
-    result = json.loads(
-        (await mcp_write_client.call_tool(
-            "create_transaction_rule",
-            {
-                "set_category_id": "cat-123",
-                "merchant_name_value": "Fidelity",
-                "original_statement_value": "ROLLOVER CASH",
-            },
-        )).content[0].text
-    )
-
-    assert result["created"] is True
-    variables = mock_monarch_client.gql_call.call_args[1]["variables"]
-    assert "merchantNameCriteria" in variables["input"]
-    assert "originalStatementCriteria" in variables["input"]
-
-
-# ===================================================================
-# 12 – get_transaction_rules: slimmed shape
-# ===================================================================
-
-
-async def test_get_rules_slim_shape(mcp_client, mock_monarch_client):
-    mock_monarch_client.gql_call.return_value = {
-        "transactionRules": [
-            {
-                "id": "rule-1",
-                "merchantNameCriteria": [{"operator": "contains", "value": "amazon"}],
-                "originalStatementCriteria": None,
-                "setCategoryAction": {"id": "cat-1", "name": "Shopping"},
-            },
-            {
-                "id": "rule-2",
-                "merchantNameCriteria": None,
-                "originalStatementCriteria": [{"operator": "eq", "value": "rollover"}],
-                "setCategoryAction": {"id": "cat-2", "name": "Transfer"},
-            },
-        ]
-    }
-
-    result = json.loads(
-        (await mcp_client.call_tool("get_transaction_rules")).content[0].text
-    )
-
-    assert mock_monarch_client.gql_call.call_args[1]["operation"] == "Common_GetTransactionRules"
-    assert result == [
-        {
-            "id": "rule-1",
-            "set_category_id": "cat-1",
-            "set_category_name": "Shopping",
-            "merchant_name_criteria": [{"operator": "contains", "value": "amazon"}],
-            "original_statement_criteria": [],
-        },
-        {
-            "id": "rule-2",
-            "set_category_id": "cat-2",
-            "set_category_name": "Transfer",
-            "merchant_name_criteria": [],
-            "original_statement_criteria": [{"operator": "eq", "value": "rollover"}],
-        },
-    ]
-
-
-# ===================================================================
-# 13 – get_transaction_rules: empty list
-# ===================================================================
-
-
-async def test_get_rules_empty(mcp_client, mock_monarch_client):
+async def test_update_transaction_rule_missing_id_raises(
+    mcp_write_client, mock_monarch_client,
+):
     mock_monarch_client.gql_call.return_value = {"transactionRules": []}
 
-    result = json.loads(
-        (await mcp_client.call_tool("get_transaction_rules")).content[0].text
-    )
+    text = (await mcp_write_client.call_tool(
+        "update_transaction_rule",
+        {"rule_id": "does-not-exist", "overrides": {}},
+    )).content[0].text
 
-    assert result == []
-
-
-# ===================================================================
-# 14 – delete_transaction_rule: happy path
-# ===================================================================
+    assert "Error" in text
+    assert "does-not-exist" in text
 
 
-async def test_delete_rule_success(mcp_write_client, mock_monarch_client):
-    # Monarch's payload `deleted` field is unreliable; a successful call (no
-    # exception) means the rule was deleted, so the tool reports deleted: true.
+async def test_delete_transaction_rule_passes_id(
+    mcp_write_client, mock_monarch_client,
+):
+    # Server returns deleted: false even on success — should NOT be treated
+    # as a failure by the tool.
     mock_monarch_client.gql_call.return_value = {
-        "deleteTransactionRule": {"__typename": "DeleteTransactionRuleMutation"}
+        "deleteTransactionRule": {"deleted": False, "errors": None},
     }
 
     result = json.loads(
         (await mcp_write_client.call_tool(
-            "delete_transaction_rule", {"rule_id": "rule-1"}
+            "delete_transaction_rule",
+            {"rule_id": "rule-99"},
         )).content[0].text
     )
 
-    assert result == {"deleted": True, "rule_id": "rule-1"}
+    assert result["deleteTransactionRule"]["errors"] is None
     call_kwargs = mock_monarch_client.gql_call.call_args[1]
-    assert call_kwargs["operation"] == "Common_DeleteTransactionRuleMutation"
-    assert call_kwargs["variables"] == {"id": "rule-1"}
+    assert call_kwargs["operation"] == "Common_DeleteTransactionRule"
+    assert call_kwargs["variables"] == {"id": "rule-99"}
 
 
-# ===================================================================
-# 15 – delete_transaction_rule: not-found / transport error via decorator
-# ===================================================================
-
-
-async def test_delete_rule_not_found(mcp_write_client, mock_monarch_client):
-    mock_monarch_client.gql_call.side_effect = TransportQueryError("Not found")
-
-    result = (await mcp_write_client.call_tool(
-        "delete_transaction_rule", {"rule_id": "does-not-exist"}
-    )).content[0].text
-
-    assert "Error" in result
-    assert "Not found" in result
+async def test_write_tools_disabled_in_read_only(mcp_client, mock_monarch_client):  # pylint: disable=unused-argument
+    tools = [t.name for t in (await mcp_client.list_tools())]
+    assert "create_transaction_rule" not in tools
+    assert "update_transaction_rule" not in tools
+    assert "delete_transaction_rule" not in tools
+    # Read tool stays exposed.
+    assert "get_transaction_rules" in tools

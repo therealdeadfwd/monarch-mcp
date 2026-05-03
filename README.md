@@ -7,7 +7,7 @@ A Model Context Protocol (MCP) server for integrating with the Monarch Money per
 
 - **Secure by design** — browser-based login, token stored in OS keychain (never in config files or env vars)
 - **Safe by default** — read-only mode prevents accidental changes; write tools require explicit opt-in
-- **Comprehensive** — 40 tools covering accounts, transactions, splits, budgets, cashflow, tags, categories, rules, recurring merchants, and credit history
+- **Comprehensive** — 44 tools covering accounts, transactions, splits, budgets, cashflow, tags, categories, transaction rules, recurring merchants, and credit history
 - **Easy to install** — Claude Desktop extension (`.mcpb`), `uvx`, or `pip`
 
 **Two operating modes:**
@@ -204,8 +204,9 @@ Create a tag called "Business Expenses" in red
 | `create_transaction_category` | Create a category | write |
 | `delete_transaction_category` | Delete a category | write |
 | **Rules** | | |
-| `get_transaction_rules` | List auto-categorization rules (id, criteria, target category) | read |
-| `create_transaction_rule` | Create an auto-categorization rule | write |
+| `get_transaction_rules` | List every transaction rule with its criteria, actions, and recent application stats | read |
+| `create_transaction_rule` | Create a transaction rule with full criteria + actions (category, tags, merchant, amount, splits…) | write |
+| `update_transaction_rule` | Update a rule by id; merges overrides onto the current rule (handles Monarch's REPLACE semantics) | write |
 | `delete_transaction_rule` | Delete a rule by ID | write |
 | **Budgets & Cashflow** | | |
 | `get_budgets` | Get budget information | read |
