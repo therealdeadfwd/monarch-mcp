@@ -33,6 +33,7 @@ WRITE_TOOL_NAMES = frozenset({
     "create_transaction_category", "delete_transaction_category",
     "create_manual_account", "update_account", "delete_account",
     "create_transaction_rule", "delete_transaction_rule",
+    "update_recurring_merchant",
 })
 
 

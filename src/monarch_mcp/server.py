@@ -1014,6 +1014,110 @@ async def get_recurring_transactions(
 
 
 @mcp.tool()
+@_handle_mcp_errors("finding merchant id by name")
+async def find_merchant_id_by_name(
+    name: str,
+    limit: int = 5,
+) -> str:
+    """Find merchant IDs by (partial) name.
+
+    Searches recent transactions matching ``name`` and returns the
+    distinct merchants seen, with their IDs.  Useful before calling
+    ``update_recurring_merchant``: Monarch's mutation operates on a
+    merchant, not a name, so you need the ID.
+
+    Args:
+        name: Free-text search query (matched against merchant + description).
+        limit: Maximum number of distinct merchants to return.
+    """
+
+    async def _search() -> Dict[str, Any]:
+        client = await _get_monarch_client()
+        return await client.get_transactions(search=name, limit=200)
+
+    result = await with_auth_recovery(_search())
+    seen: Dict[str, Dict[str, Any]] = {}
+    for txn in result.get("allTransactions", {}).get("results", []):
+        merchant = txn.get("merchant") or {}
+        mid = merchant.get("id")
+        mname = merchant.get("name")
+        if not mid:
+            continue
+        if mid not in seen:
+            seen[mid] = {
+                "merchant_id": mid,
+                "merchant_name": mname,
+                "sample_amount": txn.get("amount"),
+                "sample_date": txn.get("date"),
+                "sample_account": (txn.get("account") or {}).get("displayName"),
+            }
+        if len(seen) >= limit:
+            break
+    return json.dumps(list(seen.values()), indent=2, default=str)
+
+
+@mcp.tool(enabled=_WRITE_ENABLED)
+@_handle_mcp_errors("updating recurring merchant")
+async def update_recurring_merchant(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    merchant_id: str,
+    name: str,
+    is_recurring: bool,
+    frequency: Optional[str] = None,
+    base_date: Optional[str] = None,
+    amount: Optional[float] = None,
+    is_active: Optional[bool] = None,
+) -> str:
+    """Update or create the recurring-merchant settings for a merchant.
+
+    The Monarch UI's "recurring transactions" list is backed by a
+    per-merchant ``recurringTransactionStream``.  This tool wraps the
+    library's ``update_reoccuring`` mutation.  ``is_recurring`` is
+    **required** on every call: Monarch rejects a recurrence change that
+    doesn't state it, so it must always be passed.
+
+    - **Mark recurring / set the full schedule** — ``is_recurring=True``
+      with ``frequency`` / ``base_date`` / ``amount``.
+    - **Adjust an existing recurrence** (change the amount, or switch it
+      on/off) — keep ``is_recurring=True`` and pass only the field you are
+      changing; Monarch keeps the rest of the schedule. Omitting
+      ``is_recurring`` here is what produced the opaque
+      "Something went wrong" error, hence it is now mandatory.
+    - **Deactivate without deleting** — ``is_recurring=True,
+      is_active=False`` keeps the recurrence defined but stops surfacing it
+      as a bill.
+    - **Clear the recurring flag entirely** — ``is_recurring=False``.
+
+    Args:
+        merchant_id: Monarch merchant ID (use ``find_merchant_id_by_name``).
+        name: Merchant display name (required by Monarch's mutation).
+        is_recurring: Required. True to mark/keep recurring, False to unmark.
+        frequency: Recurrence cadence — e.g. ``monthly``, ``weekly``,
+            ``biweekly``, ``yearly``. Optional when adjusting an existing
+            recurrence (Monarch keeps the current cadence).
+        base_date: Recurrence anchor date in YYYY-MM-DD format. Optional
+            when adjusting an existing recurrence.
+        amount: Expected recurring amount (negative for expenses).
+        is_active: True to surface as an upcoming bill; False to keep
+            the recurrence definition but stop showing it.
+    """
+
+    async def _update() -> Dict[str, Any]:
+        client = await _get_monarch_client()
+        return await client.update_reoccuring(
+            merchant_id=merchant_id,
+            name=name,
+            is_recurring=is_recurring,
+            frequency=frequency,
+            base_date=base_date,
+            amount=amount,
+            is_active=is_active,
+        )
+
+    result = await with_auth_recovery(_update())
+    return json.dumps(result, indent=2, default=str)
+
+
+@mcp.tool()
 @_handle_mcp_errors("getting transactions summary")
 async def get_transactions_summary() -> str:
     """Get aggregate transaction summary (count, sum, avg, max, income, expenses)."""

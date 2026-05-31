@@ -7,7 +7,7 @@ A Model Context Protocol (MCP) server for integrating with the Monarch Money per
 
 - **Secure by design** — browser-based login, token stored in OS keychain (never in config files or env vars)
 - **Safe by default** — read-only mode prevents accidental changes; write tools require explicit opt-in
-- **Comprehensive** — 38 tools covering accounts, transactions, splits, budgets, cashflow, tags, categories, rules, and credit history
+- **Comprehensive** — 40 tools covering accounts, transactions, splits, budgets, cashflow, tags, categories, rules, recurring merchants, and credit history
 - **Easy to install** — Claude Desktop extension (`.mcpb`), `uvx`, or `pip`
 
 **Two operating modes:**
@@ -187,10 +187,12 @@ Create a tag called "Business Expenses" in red
 | `get_transactions_summary` | Aggregate transaction stats | read |
 | `get_transaction_splits` | Get split information | read |
 | `get_recurring_transactions` | Get recurring transactions | read |
+| `find_merchant_id_by_name` | Search recent transactions for a merchant and return distinct IDs | read |
 | `create_transaction` | Create new transaction | write |
 | `update_transaction` | Update existing transaction | write |
 | `delete_transaction` | Delete a transaction | write |
 | `update_transaction_splits` | Create/modify/delete splits | write |
+| `update_recurring_merchant` | Mark/unmark a merchant as recurring, update its frequency/amount, or deactivate it — `is_recurring` is required on every call (requires `--enable-write`) | write |
 | **Tags** | | |
 | `get_transaction_tags` | Get all tags | read |
 | `create_transaction_tag` | Create new tag | write |

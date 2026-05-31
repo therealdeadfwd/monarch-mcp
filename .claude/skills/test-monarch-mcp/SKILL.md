@@ -1,6 +1,6 @@
 ---
 name: test-monarch-mcp
-description: Systematically test Monarch Money MCP tools in read-only mode (27 tools, 54 tests) or write-enabled mode (all 42 tools, 101 tests). Account-agnostic (discovers IDs at runtime) and self-cleaning (deletes everything it creates in write mode). Batches each phase into a subagent so large tool payloads stay out of the orchestrator's context.
+description: Systematically test Monarch Money MCP tools in read-only mode (28 tools, 58 tests) or write-enabled mode (all 44 tools, 109 tests). Account-agnostic (discovers IDs at runtime) and self-cleaning (deletes everything it creates in write mode). Batches each phase into a subagent so large tool payloads stay out of the orchestrator's context.
 user_invocable: true
 ---
 
@@ -14,7 +14,7 @@ compact PASS/FAIL summary. You aggregate the summaries, track created resources,
 print the final report. This keeps large tool payloads (transaction lists, rule lists, full objects)
 inside the subagents and out of your context.
 
-Run tests across 13 phases, track results, and clean up after yourself.
+Run tests across 14 phases, track results, and clean up after yourself.
 
 > **Scope of this skill:** it validates that the **agent** uses the MCP tools correctly — right tool,
 > right params, correct interpretation of responses (happy paths, agent-judgment cases, and one
@@ -28,9 +28,9 @@ Run tests across 13 phases, track results, and clean up after yourself.
 
 This test suite supports two modes, auto-detected at startup:
 
-- **Read-only mode** (default): Tests 27 read-only tools (54 tests). Write-dependent tests are
+- **Read-only mode** (default): Tests 28 read-only tools (58 tests). Write-dependent tests are
   skipped. No data is created, modified, or deleted.
-- **Write-enabled mode** (`--enable-write`): Tests all 42 tools (101 tests). Creates, modifies, and
+- **Write-enabled mode** (`--enable-write`): Tests all 44 tools (109 tests). Creates, modifies, and
   deletes data on your live Monarch account. Self-cleaning.
 
 ---
@@ -120,10 +120,11 @@ Use the Task tool (subagent type: `general-purpose`). The prompt you pass must c
 | 7 | Transaction Tagging | `references/transaction-tagging.md` | — (skip) | yes |
 | 8 | Categories | `references/categories.md` | 8.1–8.3 | yes |
 | 9 | Details & Splits | `references/transaction-details-and-splits.md` | 9.1–9.4 | yes (9.5–9.7) |
-| 10 | Read-Only Tools | `references/read-only-tools.md` | all (9) | no |
+| 10 | Read-Only Tools | `references/read-only-tools.md` | all (12) | no |
 | 11 | Account Management | `references/account-management.md` | 11.1, 11.6-alt, 11.7–11.10 | yes |
 | 12 | Analytics | `references/analytics-tools.md` | all (5) | no |
 | 13 | Transaction Rules | `references/transaction-rules.md` | 13.7 | yes |
+| 14 | Recurring Merchant Management | `references/recurring-merchant.md` | 14.1 | yes |
 
 > **Phase 11 read-only note:** run **11.6-alt** instead of 11.6 — it calls `get_account_history` with
 > `{checking_account_id}` because no account is created in read-only mode.
@@ -179,7 +180,7 @@ The state file is `mcp-test-state.json` in the project root.
   },
   "results": {},
   "summary": {
-    "total": 101,
+    "total": 109,
     "passed": 0,
     "failed": 0,
     "skipped": 0
@@ -187,8 +188,8 @@ The state file is `mcp-test-state.json` in the project root.
 }
 ```
 
-In **read-only mode**, `summary.total` is `54` and `original_values` is omitted (no mutations happen).
-In **write-enabled mode**, `summary.total` is `101`.
+In **read-only mode**, `summary.total` is `58` and `original_values` is omitted (no mutations happen).
+In **write-enabled mode**, `summary.total` is `109`.
 
 ### Update Cadence
 
@@ -225,8 +226,8 @@ Before starting any test work (including Phase 0), detect the server mode and ge
 ### Mode Detection (Phase 0 preamble)
 
 Check which MCP tools are available. If write tools like `create_transaction`, `create_transaction_tag`,
-`delete_transaction`, etc. are available, the server is in **read-write mode**. If they are absent, the
-server is in **read-only mode**.
+`delete_transaction`, `update_recurring_merchant`, etc. are available, the server is in **read-write mode**.
+If they are absent, the server is in **read-only mode**.
 
 ### User Confirmation
 
@@ -237,12 +238,12 @@ approval**:
 
 ---
 
-**Server is running in read-only mode (27 tools).**
+**Server is running in read-only mode (28 tools).**
 
-I'll run 54 read-only tests and skip 47 write tests. No data will be created, modified, or deleted on
+I'll run 58 read-only tests and skip 51 write tests. No data will be created, modified, or deleted on
 your Monarch account.
 
-To test all 101 tests, disable `monarch-money-read-only` and enable `monarch-money` in `.mcp.json`,
+To test all 109 tests, disable `monarch-money-read-only` and enable `monarch-money` in `.mcp.json`,
 then restart.
 
 **Proceed with read-only tests?**
@@ -253,13 +254,13 @@ then restart.
 
 ---
 
-**WARNING: Server is running in read-write mode (all 42 tools).**
+**WARNING: Server is running in read-write mode (all 44 tools).**
 
-I'll run all 101 tests. This will **create, modify, and delete** data on your **live Monarch Money
+I'll run all 109 tests. This will **create, modify, and delete** data on your **live Monarch Money
 account**:
 
 - It **creates and deletes** transactions, tags, categories, and accounts.
-- It **temporarily modifies** an existing transaction (then reverts it).
+- It **temporarily modifies** an existing transaction and one merchant's recurring state (then reverts them).
 - The test is designed to clean up everything it creates, but **if something goes wrong** (network
   error, timeout, context limit), **cleanup may be incomplete** and unwanted changes could remain in
   your account.
@@ -331,7 +332,7 @@ If any required value (`checking_account_id`, `test_transaction_id`, `valid_cate
 
 ---
 
-## Phases 1–13
+## Phases 1–14
 
 For each phase, dispatch a subagent per the **Execution Model** (read-only → concurrent; write →
 sequential). Pass the mode, the read-only subset (from the Phase Map), the discovery values, the
@@ -436,13 +437,14 @@ subagent returns.
 ║ Phase 7  — Tagging:           SKIPPED (write)    ║
 ║ Phase 8  — Categories:        3/3  PASS          ║
 ║ Phase 9  — Details/Splits:    4/4  PASS          ║
-║ Phase 10 — Read-Only Tools:   9/9  PASS          ║
+║ Phase 10 — Read-Only Tools:   12/12 PASS         ║
 ║ Phase 11 — Account Mgmt:      6/6  PASS          ║
 ║ Phase 12 — Analytics:         5/5  PASS          ║
 ║ Phase 13 — Rules:             1/1  PASS          ║
+║ Phase 14 — Recurring Merch:   1/1  PASS          ║
 ╠══════════════════════════════════════════════════╣
-║ TOTAL: 54 passed, 0 failed, 0 skipped           ║
-║ Write tests skipped: 47 (server in read-only)    ║
+║ TOTAL: 58 passed, 0 failed, 0 skipped           ║
+║ Write tests skipped: 51 (server in read-only)    ║
 ╚══════════════════════════════════════════════════╝
 ```
 
@@ -461,12 +463,13 @@ subagent returns.
 ║ Phase 7  — Tagging:           4/4  PASS          ║
 ║ Phase 8  — Categories:        9/9  PASS          ║
 ║ Phase 9  — Details/Splits:    7/7  PASS          ║
-║ Phase 10 — Read-Only Tools:   9/9  PASS          ║
+║ Phase 10 — Read-Only Tools:   12/12 PASS         ║
 ║ Phase 11 — Account Mgmt:      10/10 PASS         ║
 ║ Phase 12 — Analytics:         5/5  PASS          ║
 ║ Phase 13 — Transaction Rules: 10/10 PASS         ║
+║ Phase 14 — Recurring Merch:   5/5  PASS          ║
 ╠══════════════════════════════════════════════════╣
-║ TOTAL: 101 passed, 0 failed, 0 skipped          ║
+║ TOTAL: 109 passed, 0 failed, 0 skipped          ║
 ╚══════════════════════════════════════════════════╝
 ```
 
@@ -508,3 +511,5 @@ into the reference-file test bodies):
 | `{valid_category_id}` | `discovery.valid_category_id` |
 | `{created_tag_id}` | ID returned from the phase's most recent `create_transaction_tag` call (tracked inside the subagent) |
 | `{created_txn_id}` | ID returned from the phase's most recent `create_transaction` call (tracked inside the subagent) |
+| `{recurring_merchant_id}` | `merchant_id` returned by `find_merchant_id_by_name` in Phase 14.1 (tracked inside the subagent) |
+| `{recurring_merchant_name}` | `merchant_name` returned by `find_merchant_id_by_name` in Phase 14.1 (tracked inside the subagent) |
