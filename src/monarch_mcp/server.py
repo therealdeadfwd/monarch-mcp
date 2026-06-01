@@ -20,6 +20,17 @@ from monarchmoney import MonarchMoney
 
 from monarch_mcp.secure_session import secure_session
 from monarch_mcp.auth_server import trigger_auth_flow, with_auth_recovery
+from monarch_mcp.transaction_rules import (
+    CREATE_RULE_MUTATION,
+    DELETE_RULE_MUTATION,
+    GET_RULES_QUERY,
+    UPDATE_RULE_MUTATION,
+    CreateTransactionRuleInput,
+    UpdateTransactionRuleInput,
+    extract_payload_errors,
+    normalize_rule,
+    rule_to_update_input,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -517,16 +528,20 @@ async def update_transaction(  # pylint: disable=too-many-arguments,too-many-pos
     """
     Update an existing transaction in Monarch Money.
 
+    Clearing fields: omitting a field (or passing null) leaves it unchanged.
+    To *clear* notes or unlink a goal, pass an empty string ``""`` — passing
+    null does not clear them.
+
     Args:
         transaction_id: The ID of the transaction to update
         category_id: New category ID
         merchant_name: New merchant name
-        goal_id: Goal ID to associate with the transaction
+        goal_id: Goal ID to associate with the transaction; pass "" to unlink
         amount: New transaction amount
         date: New transaction date in YYYY-MM-DD format
         hide_from_reports: Whether to hide the transaction from reports
         needs_review: Whether the transaction needs review
-        notes: Transaction notes
+        notes: Transaction notes; pass "" to clear existing notes (null = unchanged)
     """
 
     async def _update_transaction():
@@ -712,145 +727,6 @@ async def set_transaction_tags(transaction_id: str, tag_ids: List[str]) -> str:
     return json.dumps(result, indent=2, default=str)
 
 
-@mcp.tool(enabled=_WRITE_ENABLED)
-@_handle_mcp_errors("creating transaction rule")
-async def create_transaction_rule(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    set_category_id: str,
-    merchant_name_value: Optional[str] = None,
-    merchant_name_operator: str = "contains",
-    original_statement_value: Optional[str] = None,
-    original_statement_operator: str = "contains",
-    account_ids: Optional[List[str]] = None,
-    apply_to_existing_transactions: bool = False,
-) -> str:
-    """
-    Create a Monarch Money transaction rule that automatically categorizes transactions.
-
-    At least one of merchant_name_value or original_statement_value must be provided.
-
-    Args:
-        set_category_id: Category ID to assign when the rule matches (required)
-        merchant_name_value: Merchant name to match (e.g. "Amazon", "Whole Foods")
-        merchant_name_operator: How to match the merchant name — "contains" (default) or "eq"
-        original_statement_value: Raw statement description to match
-        original_statement_operator: How to match the statement text — "contains" (default) or "eq"
-        account_ids: Restrict rule to specific account IDs (null = all accounts)
-        apply_to_existing_transactions: Also re-categorize past transactions that match
-    """
-    if not merchant_name_value and not original_statement_value:
-        return json.dumps(
-            {"error": "At least one of merchant_name_value or "
-                      "original_statement_value is required"},
-            indent=2,
-        )
-
-    valid_operators = {"contains", "eq"}
-    if merchant_name_operator not in valid_operators:
-        return json.dumps(
-            {"error": f"merchant_name_operator must be one of: {sorted(valid_operators)}"},
-            indent=2,
-        )
-    if original_statement_operator not in valid_operators:
-        return json.dumps(
-            {"error": f"original_statement_operator must be one of: {sorted(valid_operators)}"},
-            indent=2,
-        )
-
-    input_data: Dict[str, Any] = {
-        "setCategoryAction": set_category_id,
-        "applyToExistingTransactions": apply_to_existing_transactions,
-    }
-
-    if merchant_name_value:
-        input_data["merchantNameCriteria"] = [
-            {"operator": merchant_name_operator, "value": merchant_name_value}
-        ]
-
-    if original_statement_value:
-        input_data["originalStatementCriteria"] = [
-            {"operator": original_statement_operator, "value": original_statement_value}
-        ]
-
-    if account_ids:
-        input_data["accountIds"] = account_ids
-
-    async def _create_transaction_rule():
-        client = await _get_monarch_client()
-        mutation = gql(
-            """
-            mutation Common_CreateTransactionRuleMutationV2($input: CreateTransactionRuleInput!) {
-                createTransactionRuleV2(input: $input) {
-                    errors {
-                        message
-                    }
-                }
-            }
-            """
-        )
-        variables = {"input": input_data}
-        return await client.gql_call(
-            operation="Common_CreateTransactionRuleMutationV2",
-            graphql_query=mutation,
-            variables=variables,
-        )
-
-    result = await with_auth_recovery(_create_transaction_rule())
-
-    # Surface any API-level errors from the mutation payload.
-    # errors can be None (success), a list, or a bare dict — normalise to list.
-    rule_result = result.get("createTransactionRuleV2", {}) if isinstance(result, dict) else {}
-    raw_errors = rule_result.get("errors")
-    if isinstance(raw_errors, dict):
-        raw_errors = [raw_errors]
-    errors = raw_errors or []
-    if errors:
-        return json.dumps(
-            {"error": errors[0].get("message", "Unknown error"), "errors": errors},
-            indent=2,
-        )
-
-    return json.dumps({"created": True, "input": input_data}, indent=2)
-
-
-@mcp.tool(enabled=_WRITE_ENABLED)
-@_handle_mcp_errors("deleting transaction rule")
-async def delete_transaction_rule(rule_id: str) -> str:
-    """
-    Delete a Monarch Money transaction rule by its ID.
-
-    Use get_transaction_rules to look up rule IDs.
-
-    Args:
-        rule_id: The ID of the transaction rule to delete
-    """
-
-    async def _delete_transaction_rule():
-        client = await _get_monarch_client()
-        mutation = gql(
-            """
-            mutation Common_DeleteTransactionRuleMutation($id: ID!) {
-                deleteTransactionRule(id: $id) {
-                    __typename
-                }
-            }
-            """
-        )
-        variables = {"id": rule_id}
-        return await client.gql_call(
-            operation="Common_DeleteTransactionRuleMutation",
-            graphql_query=mutation,
-            variables=variables,
-        )
-
-    # A successful call means the rule was deleted; a missing/invalid id raises
-    # a TransportQueryError ("Not found") that the decorator turns into an error
-    # string. (Monarch's `deleted` payload field is unreliable — it returns false
-    # even on successful deletion — so we don't depend on it.)
-    await with_auth_recovery(_delete_transaction_rule())
-
-    return json.dumps({"deleted": True, "rule_id": rule_id}, indent=2)
-
-
 # ── Phase 2: Read-only tools ──────────────────────────────────────────
 
 
@@ -874,69 +750,6 @@ async def get_transaction_categories() -> str:
             "group_type": (c.get("group") or {}).get("type"),
         }
         for c in categories.get("categories", [])
-    ]
-    return json.dumps(slim, indent=2)
-
-
-@mcp.tool()
-@_handle_mcp_errors("getting transaction rules")
-async def get_transaction_rules() -> str:
-    """Get all transaction rules from Monarch Money.
-
-    Returns each rule's ID, match criteria (merchant name and/or original
-    statement), and the category it assigns. Use the returned ``id`` with
-    delete_transaction_rule.
-
-    Note: Monarch lowercases criteria values, so a rule created to match
-    "Amazon" is stored and returned as "amazon".
-    """
-
-    async def _get_transaction_rules():
-        client = await _get_monarch_client()
-        query = gql(
-            """
-            query Common_GetTransactionRules {
-                transactionRules {
-                    id
-                    merchantNameCriteria {
-                        operator
-                        value
-                    }
-                    originalStatementCriteria {
-                        operator
-                        value
-                    }
-                    setCategoryAction {
-                        id
-                        name
-                    }
-                }
-            }
-            """
-        )
-        return await client.gql_call(
-            operation="Common_GetTransactionRules",
-            graphql_query=query,
-        )
-
-    result = await with_auth_recovery(_get_transaction_rules())
-
-    def _criteria(items):
-        return [
-            {"operator": c.get("operator"), "value": c.get("value")}
-            for c in (items or [])
-        ]
-
-    rules = result.get("transactionRules", []) if isinstance(result, dict) else []
-    slim = [
-        {
-            "id": r.get("id"),
-            "set_category_id": (r.get("setCategoryAction") or {}).get("id"),
-            "set_category_name": (r.get("setCategoryAction") or {}).get("name"),
-            "merchant_name_criteria": _criteria(r.get("merchantNameCriteria")),
-            "original_statement_criteria": _criteria(r.get("originalStatementCriteria")),
-        }
-        for r in rules
     ]
     return json.dumps(slim, indent=2)
 
@@ -1115,6 +928,197 @@ async def update_recurring_merchant(  # pylint: disable=too-many-arguments,too-m
 
     result = await with_auth_recovery(_update())
     return json.dumps(result, indent=2, default=str)
+
+
+# ── Transaction rules (CRUD) ──────────────────────────────────────────
+
+
+async def _fetch_transaction_rules(client) -> Dict[str, Any]:
+    """Run ``GetTransactionRules``, tolerating field-level errors that still
+    return partial data.
+
+    A rule whose stored value can't be serialized by the current schema (e.g. an
+    ``amountType`` enum) makes Monarch return partial ``data`` alongside
+    ``errors``; gql raises ``TransportQueryError`` carrying that partial data. We
+    log it and use the partial data so one bad rule can't break listing — or
+    updating — the rest. A query error with no data still propagates.
+    """
+    try:
+        return await client.gql_call(
+            operation="GetTransactionRules",
+            graphql_query=gql(GET_RULES_QUERY),
+            variables={},
+        )
+    except TransportQueryError as exc:
+        if exc.data and isinstance(exc.data, dict):
+            logger.warning(
+                "get_transaction_rules: partial data returned due to field error(s): %s",
+                exc.errors,
+            )
+            return exc.data
+        raise
+
+
+@mcp.tool()
+@_handle_mcp_errors("getting transaction rules")
+async def get_transaction_rules() -> str:
+    """List every transaction rule on the household.
+
+    Returns each rule flattened to a clean shape: its ``id``, the category
+    it sets, all match criteria (merchant name / original statement /
+    merchant / amount), the actions it applies (tags, merchant rename,
+    goals, splits, review status), and application stats
+    (``recent_application_count``, ``last_applied_at``). Use the ``id``
+    values with ``update_transaction_rule`` or ``delete_transaction_rule``.
+
+    Note: Monarch lowercases criteria values, so a rule created to match
+    "Amazon" is stored and returned as "amazon".
+    """
+
+    async def _get_transaction_rules():
+        client = await _get_monarch_client()
+        return await _fetch_transaction_rules(client)
+
+    result = await with_auth_recovery(_get_transaction_rules())
+    rules = result.get("transactionRules", []) if isinstance(result, dict) else []
+    return json.dumps([normalize_rule(r) for r in rules], indent=2, default=str)
+
+
+@mcp.tool(enabled=_WRITE_ENABLED)
+@_handle_mcp_errors("creating transaction rule")
+async def create_transaction_rule(rule: CreateTransactionRuleInput) -> str:
+    """Create a transaction rule (criteria + actions).
+
+    Provide at least one criterion and at least one action. Examples:
+
+    - Category rule: ``merchant_name_criteria=[{"operator": "contains",
+      "value": "Amazon"}]`` + ``set_category_action="<category_id>"``.
+    - Tagging rule: also pass ``add_tags_action=["<tag_id>", ...]``.
+    - Merchant rename: ``set_merchant_action="New Name"``.
+    - Amount rule: ``amount_criteria={"operator": "gt", "isExpense": true,
+      "value": 100}`` (operator is ``gt`` / ``lt`` / ``eq``).
+    - Split rule: ``split_transactions_action={"amountType": "PERCENTAGE",
+      "splitsInfo": [{"categoryId": "<id>", "amount": 0.6},
+      {"categoryId": "<id>", "amount": 0.4}]}`` — ``amountType`` is
+      ``ABSOLUTE`` (dollar amounts) or ``PERCENTAGE`` (fractions summing to 1);
+      at least two splits.
+
+    Set ``apply_to_existing_transactions=true`` to also re-apply to past
+    transactions. Field names follow Monarch's schema (camelCase aliases
+    are accepted too).
+    """
+    input_data = rule.model_dump(by_alias=True, exclude_none=True)
+
+    async def _create_transaction_rule():
+        client = await _get_monarch_client()
+        return await client.gql_call(
+            operation="Common_CreateTransactionRuleMutationV2",
+            graphql_query=gql(CREATE_RULE_MUTATION),
+            variables={"input": input_data},
+        )
+
+    result = await with_auth_recovery(_create_transaction_rule())
+    errors = extract_payload_errors(result, "createTransactionRuleV2")
+    if errors:
+        return json.dumps(
+            {"error": errors[0].get("message", "Unknown error"), "errors": errors},
+            indent=2,
+            default=str,
+        )
+    return json.dumps({"created": True, "input": input_data}, indent=2, default=str)
+
+
+@mcp.tool(enabled=_WRITE_ENABLED)
+@_handle_mcp_errors("updating transaction rule")
+async def update_transaction_rule(
+    rule_id: str,
+    overrides: UpdateTransactionRuleInput,
+) -> str:
+    """Update an existing transaction rule (handles REPLACE semantics).
+
+    Monarch's ``updateTransactionRuleV2`` mutation has *replace*
+    semantics — any field omitted from the input is reset to ``null``
+    server-side. To avoid clobbering the rest of the rule, this tool
+    fetches the current rule, layers only the fields you set in
+    ``overrides`` on top, and submits the merged payload. So to change
+    just the category, pass ``overrides={"set_category_action":
+    "<category_id>"}`` and the criteria/tags/etc. are preserved.
+
+    Args:
+        rule_id: The ID of the rule to update (see get_transaction_rules).
+        overrides: Only the fields to change.
+    """
+
+    async def _fetch_rules():
+        client = await _get_monarch_client()
+        return await _fetch_transaction_rules(client)
+
+    rules_payload = await with_auth_recovery(_fetch_rules())
+    rules = (rules_payload or {}).get("transactionRules") or []
+    target = next((r for r in rules if r.get("id") == rule_id), None)
+    if target is None:
+        raise RuntimeError(
+            f"Transaction rule {rule_id!r} not found; "
+            f"call get_transaction_rules to list valid IDs."
+        )
+
+    override_data = overrides.model_dump(by_alias=True, exclude_unset=True)
+    payload = rule_to_update_input(target, override_data)
+
+    async def _update_rule():
+        client = await _get_monarch_client()
+        return await client.gql_call(
+            operation="Common_UpdateTransactionRuleMutationV2",
+            graphql_query=gql(UPDATE_RULE_MUTATION),
+            variables={"input": payload},
+        )
+
+    result = await with_auth_recovery(_update_rule())
+    errors = extract_payload_errors(result, "updateTransactionRuleV2")
+    if errors:
+        return json.dumps(
+            {"error": errors[0].get("message", "Unknown error"), "errors": errors},
+            indent=2,
+            default=str,
+        )
+    return json.dumps(
+        {"updated": True, "rule_id": rule_id, "input": payload}, indent=2, default=str
+    )
+
+
+@mcp.tool(enabled=_WRITE_ENABLED)
+@_handle_mcp_errors("deleting transaction rule")
+async def delete_transaction_rule(rule_id: str) -> str:
+    """Delete a transaction rule by ID.
+
+    Use get_transaction_rules to look up rule IDs.
+
+    Quirk: Monarch returns ``deleted: false`` even on a successful
+    delete, so this tool treats the call as successful unless the
+    ``errors`` payload is populated (an invalid id surfaces as an error
+    string via the decorator).
+
+    Args:
+        rule_id: The ID of the rule to delete.
+    """
+
+    async def _delete_transaction_rule():
+        client = await _get_monarch_client()
+        return await client.gql_call(
+            operation="Common_DeleteTransactionRule",
+            graphql_query=gql(DELETE_RULE_MUTATION),
+            variables={"id": rule_id},
+        )
+
+    result = await with_auth_recovery(_delete_transaction_rule())
+    errors = extract_payload_errors(result, "deleteTransactionRule")
+    if errors:
+        return json.dumps(
+            {"error": errors[0].get("message", "Unknown error"), "errors": errors},
+            indent=2,
+            default=str,
+        )
+    return json.dumps({"deleted": True, "rule_id": rule_id}, indent=2)
 
 
 @mcp.tool()
