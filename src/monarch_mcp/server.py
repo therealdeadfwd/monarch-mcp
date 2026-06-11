@@ -8,7 +8,6 @@ import json
 import logging
 import os
 import re
-import traceback
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -199,9 +198,8 @@ def check_auth_status() -> str:
         else:
             status = "No authentication token found in keyring\n"
 
-        email = os.getenv("MONARCH_EMAIL")
-        if email:
-            status += f"Environment email: {email}\n"
+        if os.getenv("MONARCH_EMAIL"):
+            status += "Environment credentials configured: yes\n"
 
         status += (
             "\nTry get_accounts to test connection or run login_setup.py if needed."
@@ -219,14 +217,11 @@ def debug_session_loading() -> str:
         # Check keyring access
         token = secure_session.load_token()
         if token:
-            return f"Token found in keyring (length: {len(token)})"
+            return "Token found in keyring."
         return "No token found in keyring. Run login_setup.py to authenticate."
     except Exception as e:  # pylint: disable=broad-exception-caught
-        error_details = traceback.format_exc()
-        return (
-            f"Keyring access failed:\nError: {e}\n"
-            f"Type: {type(e)}\nTraceback:\n{error_details}"
-        )
+        logger.error("Keyring access failed: %s", e, exc_info=True)
+        return "Keyring access failed. See the server logs for details."
 
 
 @mcp.tool()

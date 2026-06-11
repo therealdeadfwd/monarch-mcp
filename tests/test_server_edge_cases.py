@@ -94,7 +94,9 @@ async def test_check_auth_with_env_email(mcp_client, monkeypatch):
     monkeypatch.setenv("MONARCH_EMAIL", "user@test.com")
     result = (await mcp_client.call_tool("check_auth_status")).content[0].text
 
-    assert "user@test.com" in result
+    # Report that env credentials are configured without echoing the address.
+    assert "Environment credentials configured" in result
+    assert "user@test.com" not in result
 
 
 async def test_check_auth_exception(mcp_client):
@@ -124,6 +126,9 @@ async def test_debug_session_exception(mcp_client):
         result = (await mcp_client.call_tool("debug_session_loading")).content[0].text
 
     assert "Keyring access failed" in result
+    # The raw exception text and traceback must not leak to the client.
+    assert "keyring busted" not in result
+    assert "Traceback" not in result
 
 
 # ===================================================================
