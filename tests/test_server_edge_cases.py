@@ -150,6 +150,34 @@ async def test_update_transaction_goal_id(mcp_write_client, mock_monarch_client)
     assert call_kwargs["goal_id"] == "goal-42"
 
 
+async def test_update_transaction_clear_goal_flag(mcp_write_client, mock_monarch_client):
+    # clear_goal=true unlinks the goal via the client-friendly flag, forwarded as goal_id="".
+    mock_monarch_client.update_transaction.return_value = {"ok": True}
+
+    result = json.loads(
+        (await mcp_write_client.call_tool(
+            "update_transaction", {"transaction_id": "txn-1", "clear_goal": True}
+        )).content[0].text
+    )
+
+    assert result["ok"] is True
+    call_kwargs = mock_monarch_client.update_transaction.call_args[1]
+    assert call_kwargs["goal_id"] == ""
+
+
+async def test_update_transaction_clear_goal_conflict(mcp_write_client, mock_monarch_client):
+    # Linking and unlinking a goal at once is contradictory — reject loudly.
+    result = json.loads(
+        (await mcp_write_client.call_tool(
+            "update_transaction",
+            {"transaction_id": "txn-1", "goal_id": "goal-42", "clear_goal": True},
+        )).content[0].text
+    )
+
+    assert "error" in result
+    mock_monarch_client.update_transaction.assert_not_called()
+
+
 # ===================================================================
 # refresh_accounts — empty account list
 # ===================================================================

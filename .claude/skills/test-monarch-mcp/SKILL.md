@@ -1,6 +1,6 @@
 ---
 name: test-monarch-mcp
-description: Systematically test Monarch Money MCP tools in read-only mode (27 tools, 58 tests) or write-enabled mode (all 44 tools, 109 tests). Account-agnostic (discovers IDs at runtime) and self-cleaning (deletes everything it creates in write mode). Batches each phase into a subagent so large tool payloads stay out of the orchestrator's context.
+description: Systematically test Monarch Money MCP tools in read-only mode (27 tools, 58 tests) or write-enabled mode (all 44 tools, 110 tests). Account-agnostic (discovers IDs at runtime) and self-cleaning (deletes everything it creates in write mode). Batches each phase into a subagent so large tool payloads stay out of the orchestrator's context.
 user_invocable: true
 ---
 
@@ -30,7 +30,7 @@ This test suite supports two modes, auto-detected at startup:
 
 - **Read-only mode** (default): Tests 27 read-only tools (58 tests). Write-dependent tests are
   skipped. No data is created, modified, or deleted.
-- **Write-enabled mode** (`--enable-write`): Tests all 44 tools (109 tests). Creates, modifies, and
+- **Write-enabled mode** (`--enable-write`): Tests all 44 tools (110 tests). Creates, modifies, and
   deletes data on your live Monarch account. Self-cleaning.
 
 ---
@@ -180,7 +180,7 @@ The state file is `mcp-test-state.json` in the project root.
   },
   "results": {},
   "summary": {
-    "total": 109,
+    "total": 110,
     "passed": 0,
     "failed": 0,
     "skipped": 0
@@ -189,7 +189,7 @@ The state file is `mcp-test-state.json` in the project root.
 ```
 
 In **read-only mode**, `summary.total` is `58` and `original_values` is omitted (no mutations happen).
-In **write-enabled mode**, `summary.total` is `109`.
+In **write-enabled mode**, `summary.total` is `110`.
 
 ### Update Cadence
 
@@ -240,10 +240,10 @@ approval**:
 
 **Server is running in read-only mode (27 tools).**
 
-I'll run 58 read-only tests and skip 51 write tests. No data will be created, modified, or deleted on
+I'll run 58 read-only tests and skip 52 write tests. No data will be created, modified, or deleted on
 your Monarch account.
 
-To test all 109 tests, disable `monarch-money-read-only` and enable `monarch-money` in `.mcp.json`,
+To test all 110 tests, disable `monarch-money-read-only` and enable `monarch-money` in `.mcp.json`,
 then restart.
 
 **Proceed with read-only tests?**
@@ -256,7 +256,7 @@ then restart.
 
 **WARNING: Server is running in read-write mode (all 44 tools).**
 
-I'll run all 109 tests. This will **create, modify, and delete** data on your **live Monarch Money
+I'll run all 110 tests. This will **create, modify, and delete** data on your **live Monarch Money
 account**:
 
 - It **creates and deletes** transactions, tags, categories, and accounts.
@@ -371,9 +371,11 @@ update_transaction(
 )
 ```
 
-> **Clearing notes:** if `original_values.notes` was null/empty, pass `notes=""`
-> (an empty string) — `update_transaction` treats `null` as "leave unchanged" and
-> only an empty string clears the field. (Same for `goal_id`: pass `""` to unlink.)
+> **Clearing notes:** if `original_values.notes` was null/empty, omit `notes` from the
+> call above and instead pass `clear_notes=true` — `update_transaction` treats `null` as
+> "leave unchanged", and `clear_notes=true` clears the field reliably (some clients cannot
+> transmit the empty string that the legacy `notes=""` path requires). (Same for an unlinked
+> goal: pass `clear_goal=true`.)
 
 #### Step 2: Remove tags from the test transaction
 
@@ -448,7 +450,7 @@ subagent returns.
 ║ Phase 14 — Recurring Merch:   1/1  PASS          ║
 ╠══════════════════════════════════════════════════╣
 ║ TOTAL: 58 passed, 0 failed, 0 skipped           ║
-║ Write tests skipped: 51 (server in read-only)    ║
+║ Write tests skipped: 52 (server in read-only)    ║
 ╚══════════════════════════════════════════════════╝
 ```
 
@@ -463,7 +465,7 @@ subagent returns.
 ║ Phase 3  — Transaction Reads: 9/9  PASS          ║
 ║ Phase 4  — Budgets/Cashflow:  10/10 PASS         ║
 ║ Phase 5  — Tag CRUD:          5/5  PASS          ║
-║ Phase 6  — Transaction CRUD:  15/15 PASS         ║
+║ Phase 6  — Transaction CRUD:  16/16 PASS         ║
 ║ Phase 7  — Tagging:           4/4  PASS          ║
 ║ Phase 8  — Categories:        9/9  PASS          ║
 ║ Phase 9  — Details/Splits:    7/7  PASS          ║
@@ -473,7 +475,7 @@ subagent returns.
 ║ Phase 13 — Transaction Rules: 10/10 PASS         ║
 ║ Phase 14 — Recurring Merch:   5/5  PASS          ║
 ╠══════════════════════════════════════════════════╣
-║ TOTAL: 109 passed, 0 failed, 0 skipped          ║
+║ TOTAL: 110 passed, 0 failed, 0 skipped          ║
 ╚══════════════════════════════════════════════════╝
 ```
 

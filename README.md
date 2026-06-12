@@ -189,7 +189,7 @@ Create a tag called "Business Expenses" in red
 | `get_recurring_transactions` | Get recurring transactions | read |
 | `find_merchant_id_by_name` | Search recent transactions for a merchant and return distinct IDs | read |
 | `create_transaction` | Create new transaction | write |
-| `update_transaction` | Update existing transaction | write |
+| `update_transaction` | Update existing transaction (clear notes with `clear_notes`, unlink goal with `clear_goal`) | write |
 | `delete_transaction` | Delete a transaction | write |
 | `update_transaction_splits` | Create/modify/delete splits | write |
 | `update_recurring_merchant` | Mark/unmark a merchant as recurring, update its frequency/amount, or deactivate it — `is_recurring` is required on every call (requires `--enable-write`) | write |

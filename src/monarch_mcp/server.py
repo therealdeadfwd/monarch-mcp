@@ -519,25 +519,42 @@ async def update_transaction(  # pylint: disable=too-many-arguments,too-many-pos
     hide_from_reports: Optional[bool] = None,
     needs_review: Optional[bool] = None,
     notes: Optional[str] = None,
+    clear_notes: bool = False,
+    clear_goal: bool = False,
 ) -> str:
     """
     Update an existing transaction in Monarch Money.
 
     Clearing fields: omitting a field (or passing null) leaves it unchanged.
-    To *clear* notes or unlink a goal, pass an empty string ``""`` — passing
-    null does not clear them.
+    To *clear* the notes, pass ``clear_notes=true``; to *unlink* the goal, pass
+    ``clear_goal=true``. (Passing ``notes=""`` / ``goal_id=""`` also clears, but
+    some clients cannot transmit an empty string — prefer the flags.) ``clear_notes``
+    and ``notes`` are mutually exclusive, as are ``clear_goal`` and ``goal_id``.
 
     Args:
         transaction_id: The ID of the transaction to update
         category_id: New category ID
         merchant_name: New merchant name
-        goal_id: Goal ID to associate with the transaction; pass "" to unlink
+        goal_id: Goal ID to associate with the transaction (use clear_goal to unlink)
         amount: New transaction amount
         date: New transaction date in YYYY-MM-DD format
         hide_from_reports: Whether to hide the transaction from reports
         needs_review: Whether the transaction needs review
-        notes: Transaction notes; pass "" to clear existing notes (null = unchanged)
+        notes: New transaction notes (use clear_notes to clear; null = unchanged)
+        clear_notes: Clear the existing notes. Cannot be combined with notes.
+        clear_goal: Unlink the existing goal. Cannot be combined with goal_id.
     """
+
+    if clear_notes and notes:
+        return json.dumps(
+            {"error": "Pass either notes (to set) or clear_notes=true (to clear), not both."},
+            indent=2,
+        )
+    if clear_goal and goal_id:
+        return json.dumps(
+            {"error": "Pass either goal_id (to set) or clear_goal=true (to unlink), not both."},
+            indent=2,
+        )
 
     async def _update_transaction():
         client = await _get_monarch_client()
@@ -548,8 +565,8 @@ async def update_transaction(  # pylint: disable=too-many-arguments,too-many-pos
             update_data["category_id"] = category_id
         if merchant_name is not None:
             update_data["merchant_name"] = merchant_name
-        if goal_id is not None:
-            update_data["goal_id"] = goal_id
+        if clear_goal or goal_id is not None:
+            update_data["goal_id"] = "" if clear_goal else goal_id
         if amount is not None:
             update_data["amount"] = amount
         if date is not None:
@@ -558,8 +575,8 @@ async def update_transaction(  # pylint: disable=too-many-arguments,too-many-pos
             update_data["hide_from_reports"] = hide_from_reports
         if needs_review is not None:
             update_data["needs_review"] = needs_review
-        if notes is not None:
-            update_data["notes"] = notes
+        if clear_notes or notes is not None:
+            update_data["notes"] = "" if clear_notes else notes
 
         return await client.update_transaction(**update_data)
 

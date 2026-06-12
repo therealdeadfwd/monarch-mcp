@@ -252,7 +252,7 @@ async def test_create_default_update_balance(mcp_write_client, mock_monarch_clie
 
 
 # ===================================================================
-# UPDATE (14 tests)
+# UPDATE (17 tests)
 # ===================================================================
 
 
@@ -279,6 +279,53 @@ async def test_update_clear_notes_with_empty_string(mcp_write_client, mock_monar
     result = json.loads(
         (await mcp_write_client.call_tool(
             "update_transaction", {"transaction_id": "txn-1", "notes": ""}
+        )).content[0].text
+    )
+
+    assert result["notes"] == ""
+    call_kwargs = mock_monarch_client.update_transaction.call_args[1]
+    assert call_kwargs["notes"] == ""
+
+
+async def test_update_clear_notes_with_flag(mcp_write_client, mock_monarch_client):
+    # clear_notes=true is the client-friendly way to clear notes (no empty string
+    # needed): the flag must be forwarded to the underlying API as notes="".
+    mock_monarch_client.update_transaction.return_value = {"id": "txn-1", "notes": ""}
+
+    result = json.loads(
+        (await mcp_write_client.call_tool(
+            "update_transaction", {"transaction_id": "txn-1", "clear_notes": True}
+        )).content[0].text
+    )
+
+    assert result["notes"] == ""
+    call_kwargs = mock_monarch_client.update_transaction.call_args[1]
+    assert call_kwargs["notes"] == ""
+
+
+async def test_update_clear_notes_flag_conflict(mcp_write_client, mock_monarch_client):
+    # Setting notes and clearing them at once is contradictory — reject loudly
+    # rather than silently picking one.
+    result = json.loads(
+        (await mcp_write_client.call_tool(
+            "update_transaction",
+            {"transaction_id": "txn-1", "notes": "keep", "clear_notes": True},
+        )).content[0].text
+    )
+
+    assert "error" in result
+    mock_monarch_client.update_transaction.assert_not_called()
+
+
+async def test_update_clear_notes_flag_with_empty_string_ok(mcp_write_client, mock_monarch_client):
+    # clear_notes=true alongside notes="" is redundant agreement (both mean "clear"),
+    # not a conflict — it must succeed and clear the notes.
+    mock_monarch_client.update_transaction.return_value = {"id": "txn-1", "notes": ""}
+
+    result = json.loads(
+        (await mcp_write_client.call_tool(
+            "update_transaction",
+            {"transaction_id": "txn-1", "notes": "", "clear_notes": True},
         )).content[0].text
     )
 

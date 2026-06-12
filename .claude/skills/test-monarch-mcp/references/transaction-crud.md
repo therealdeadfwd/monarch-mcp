@@ -1,4 +1,4 @@
-# Phase 6 — Transaction CRUD (15 tests)
+# Phase 6 — Transaction CRUD (16 tests)
 
 > **Scope:** Happy create/update/delete paths plus one representative invalid-id error. Adversarial
 > create/update inputs (invalid account/category/date, huge amounts, unicode, 1000-char notes, XSS
@@ -99,7 +99,7 @@ create_transaction(
 
 ---
 
-## Update Tests (10 tests)
+## Update Tests (11 tests)
 
 All update tests use `{test_transaction_id}` from discovery. After all update tests, the original values will be restored during cleanup.
 
@@ -248,7 +248,23 @@ update_transaction(
 
 ---
 
-### Test 6.14 — update_transaction: Invalid transaction_id
+### Test 6.14 — update_transaction: Clear Notes via clear_notes Flag
+
+**Tool call:**
+```
+update_transaction(
+  transaction_id = "{test_transaction_id}",
+  clear_notes    = true
+)
+```
+
+**Expected:** The notes field is cleared (empty). `clear_notes=true` is the client-friendly way to clear notes without passing an empty string.
+
+**Validation:** Response indicates success (not an error). The `notes` field is empty/null. No crash.
+
+---
+
+### Test 6.15 — update_transaction: Invalid transaction_id
 
 **Tool call:**
 ```
@@ -266,7 +282,7 @@ update_transaction(
 
 ## Delete Tests (1 test)
 
-### Test 6.15 — delete_transaction: Happy Path
+### Test 6.16 — delete_transaction: Happy Path
 
 **Prerequisite:** `{created_txn_id}` from test 6.1 must exist.
 

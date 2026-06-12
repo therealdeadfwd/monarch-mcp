@@ -118,6 +118,40 @@ async def test_update_transaction_adversarial_input_is_graceful(
         )
 
 
+# ── robustness: clear_notes flag actually clears on the live API ───────
+
+async def test_update_transaction_clear_notes_flag_clears_live(
+    live_write_client, call_json, extract_id, checking_account_id, category_id
+):
+    # The clear_notes flag exists because some clients can't transmit notes="".
+    # Verify it really empties the note on Monarch's side (not just locally).
+    txn_id, result = await _create_txn(
+        live_write_client, call_json, extract_id, checking_account_id, category_id,
+        notes="MCP-Test-note-to-clear",
+    )
+    assert txn_id, f"setup failed to create throwaway txn: {result}"
+    try:
+        before = await call_json(
+            live_write_client, "get_transaction_details", {"transaction_id": txn_id}
+        )
+        assert "MCP-Test-note-to-clear" in json.dumps(before)
+
+        await call_json(
+            live_write_client, "update_transaction",
+            {"transaction_id": txn_id, "clear_notes": True},
+        )
+
+        after = await call_json(
+            live_write_client, "get_transaction_details", {"transaction_id": txn_id}
+        )
+        assert "MCP-Test-note-to-clear" not in json.dumps(after), \
+            f"clear_notes did not clear the note: {json.dumps(after)[:300]}"
+    finally:
+        await live_write_client.call_tool(
+            "delete_transaction", {"transaction_id": txn_id}
+        )
+
+
 # ── live error path: server-side invalid date on create ────────────────
 
 async def test_create_transaction_invalid_date_is_graceful(
